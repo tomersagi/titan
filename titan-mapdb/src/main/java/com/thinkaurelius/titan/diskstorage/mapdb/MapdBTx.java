@@ -1,3 +1,18 @@
+/*
+ Copyright 2015 Hewlett-Packard Development Company, L.P.
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+*/
 package com.thinkaurelius.titan.diskstorage.mapdb;
 
 import com.thinkaurelius.titan.diskstorage.BackendException;
@@ -16,9 +31,9 @@ public class MapdBTx extends AbstractStoreTransaction {
     private DB tx = null;
     private TxMaker maker = null;
 
-    public MapdBTx(BaseTransactionConfig config, MapDBKeyValueStore store) {
+    public MapdBTx(BaseTransactionConfig config, TxMaker maker) {
         super(config);
-        maker = store.getTxMaker();
+        this.maker = maker;
         tx = maker.makeTx();
     }
 
@@ -36,13 +51,15 @@ public class MapdBTx extends AbstractStoreTransaction {
     @Override
     public synchronized void commit() throws BackendException {
         super.commit();
+        log.debug("Committed tx: {}",this.toString());
         maker.execute(new TxBlock() {
             @Override
             public void tx(DB txB) throws TxRollbackException {
-                txB = tx;
+                tx.commit();
+                txB.close();
             }
         });
-//        tx.commit();
+
         if (tx == null) return;
         if (log.isTraceEnabled())
             log.trace("{} committed", this.toString(), new TransactionClose(this.toString()));

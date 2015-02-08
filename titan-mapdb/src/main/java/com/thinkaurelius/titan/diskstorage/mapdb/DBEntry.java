@@ -5,7 +5,7 @@ import java.io.Serializable;
 
 /**
  * Encodes database key and data items as a byte array.
- * Based on BerekelyDB's DatabaseEntry class
+ * Truncated version of BerekelyDB's DatabaseEntry class
  *
  * <p>Storage and retrieval methods are based on key/data
  * pairs. Both key and data items are represented by DBEntry objects.
