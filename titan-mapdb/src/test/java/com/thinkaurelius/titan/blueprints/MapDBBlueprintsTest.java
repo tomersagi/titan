@@ -37,7 +37,7 @@ public class MapDBBlueprintsTest extends TitanBlueprintsTest {
             s.clearStorage();
             s.close();
             File dirFile = new File(dir);
-//            Assert.assertFalse(dirFile.exists() && dirFile.listFiles().length > 0);
+           // Assert.assertFalse(dirFile.exists() && dirFile.listFiles().length > 0);
         } catch (BackendException e) {
             throw new RuntimeException(e);
         }
@@ -56,7 +56,7 @@ public class MapDBBlueprintsTest extends TitanBlueprintsTest {
         s.clearStorage();
         s.close();
         File dirFile = new File(dir);
-  //      Assert.assertFalse(dirFile.exists() && dirFile.listFiles().length > 0);
+        Assert.assertFalse(dirFile.exists() && dirFile.listFiles().length > 0);
     }
 
     @Override

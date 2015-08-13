@@ -1,19 +1,3 @@
-/*
- Copyright 2015 Hewlett-Packard Development Company, L.P.
-
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
- http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
-*/
-
 package com.thinkaurelius.titan.diskstorage.mapdb;
 
 
@@ -33,9 +17,8 @@ import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.KeyValueEntry
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.OrderedKeyValueStoreManager;
 import com.thinkaurelius.titan.graphdb.configuration.GraphDatabaseConfiguration;
 import com.thinkaurelius.titan.graphdb.configuration.PreInitializeConfigOptions;
-import javassist.bytecode.stackmap.BasicBlock;
-import org.mapdb.DB;
 import org.mapdb.DBMaker;
+import org.mapdb.Serializer;
 import org.mapdb.TxMaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,22 +29,25 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * MapDB based storage manager. Each store-manager is a file based MapDB. Each store is a mapDB named map.
+ * MapDB based storage manager. Each store is a file
  */
 @PreInitializeConfigOptions
 public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyValueStoreManager {
 
     public static final ConfigNamespace MapDB_NS =
             new ConfigNamespace(GraphDatabaseConfiguration.STORAGE_NS, "mapdb", "MapDB configuration options");
+    public static final Serializer<DBEntry> DBSER=new DBEntrySerializer();
+    public static final Serializer<Object> DBKSER=new DBEntryKeySerializer();
     private static final Logger log = LoggerFactory.getLogger(MapDBStoreManager.class);
     protected final StoreFeatures features;
-    private TxMaker txMaker;
-    private Map<String,MapDBKeyValueStore> stores;
+    private final Map<String, MapDBKeyValueStore> stores;
+    private final TxMaker txMaker;
 
     public MapDBStoreManager(Configuration configuration) throws BackendException {
         super(configuration);
-        txMaker = DBMaker.newFileDB(new File(this.directory, "main.mapdb")).makeTxMaker();
         stores = new HashMap<String, MapDBKeyValueStore>();
+        txMaker = DBMaker.fileDB(new File(directory, "titanBackEnd.mapdb")).deleteFilesAfterClose()
+                .serializerClassLoader(MapDBStoreManager.class.getClassLoader()).makeTxMaker();
         features = new StandardStoreFeatures.Builder()
                 .orderedScan(true)
                 .transactional(transactional)
@@ -84,16 +70,24 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
 
     @Override
     public MapdBTx beginTransaction(final BaseTransactionConfig txCfg) throws BackendException {
-        return new MapdBTx(txCfg, getTxMaker());
+        if (!this.stores.values().iterator().hasNext())
+            throw new IllegalStateException("Cannot open transaction, no store exists in MapDB");
+        return new MapdBTx(txCfg, this.stores.values().iterator().next());
     }
 
     @Override
     public MapDBKeyValueStore openDatabase(String name) throws BackendException {
         Preconditions.checkNotNull(name);
-        if (stores.containsKey(name))
+        if (stores.containsKey(name)) {
+            log.debug("Store " +  name + " accessed");
             return stores.get(name);
-        stores.put(name,new MapDBKeyValueStore(name,this));
-        return stores.get(name);
+        }
+
+
+        MapDBKeyValueStore store = new MapDBKeyValueStore(name, this);
+        log.debug("Store " +  name + " created");
+        stores.put(name, store);
+        return store;
     }
 
     @Override
@@ -124,7 +118,7 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
 
     void removeDatabase(MapDBKeyValueStore db) {
         if (!stores.containsKey(db.getName())) {
-            throw new IllegalArgumentException("Tried to remove an unknown database from the storage manager");
+            throw new IllegalArgumentException("Tried to remove an unkown database from the storage manager");
         }
         String name = db.getName();
         stores.remove(name);
@@ -138,12 +132,17 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
             db.close();
 
         stores.clear();
+        txMaker.close();
     }
 
     @Override
     public void clearStorage() throws BackendException {
-        for (MapDBKeyValueStore db : stores.values())
+        for (MapDBKeyValueStore db : stores.values())  {
             db.clear();
+            db.close();
+        }
+        //TODO delete db files
+
         stores.clear();
     }
 

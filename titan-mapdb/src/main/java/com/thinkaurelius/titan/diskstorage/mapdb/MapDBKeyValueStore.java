@@ -1,43 +1,22 @@
-/*
- Copyright 2015 Hewlett-Packard Development Company, L.P.
-
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
- http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
-
- */
-
 package com.thinkaurelius.titan.diskstorage.mapdb;
 
 import com.thinkaurelius.titan.diskstorage.BackendException;
 import com.thinkaurelius.titan.diskstorage.StaticBuffer;
+import com.thinkaurelius.titan.diskstorage.TemporaryBackendException;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.StoreTransaction;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.KVQuery;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.KeyValueEntry;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.OrderedKeyValueStore;
 import com.thinkaurelius.titan.diskstorage.util.RecordIterator;
 import com.thinkaurelius.titan.diskstorage.util.StaticArrayBuffer;
-import org.mapdb.BTreeMap;
-import org.mapdb.DB;
+import org.mapdb.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.*;
 
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-
-/**
- * a MapDBKeyValueStore corresponds to a MapDB TreeMap
- */
 public class MapDBKeyValueStore implements OrderedKeyValueStore {
 
-//    private static final Logger log = LoggerFactory.getLogger(MapDBKeyValueStore.class);
+    private static final Logger log = LoggerFactory.getLogger(MapDBKeyValueStore.class);
 
     private static final StaticBuffer.Factory<DBEntry> ENTRY_FACTORY = new StaticBuffer.Factory<DBEntry>() {
         @Override
@@ -46,11 +25,17 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         }
     };
 
-    private String name;
+    private static StaticBuffer getBuffer(DBEntry entry) {
+        return new StaticArrayBuffer(entry.getData(),entry.getOffset(),entry.getOffset()+entry.getSize());
+    }
+
+    private final String name;
     private final MapDBStoreManager manager;
+    private boolean isOpen;
+
 
     /**
-     * Creates a map in this MapDB with the given name
+     * Creates a file backed MapDB where the file path will be dir / storeName.mapdb
      *
      * @param n   name of this store
      * @param m   Store manager handles multiple store management
@@ -58,10 +43,23 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
     public MapDBKeyValueStore(String n, MapDBStoreManager m) {
         name = n;
         manager = m;
-//        DB mapMakeTx = manager.getTxMaker().makeTx();
-//        Map<DBEntry, DBEntry> map = mapMakeTx.getTreeMap(n);
-//        mapMakeTx.commit();
-        //noop MapDB creates maps when first accessed
+
+        DB tmpDB=null;
+
+        try {
+            tmpDB = m.getTxMaker().makeTx();
+            if (!tmpDB.exists(name))
+                tmpDB.treeMapCreate(name).keySerializer(MapDBStoreManager.DBKSER).valueSerializer(MapDBStoreManager.DBSER).make();
+//            tmpDB.commit(); moved to finally
+
+        } catch (IllegalArgumentException e) {
+            //noop
+
+        } finally {
+            if (tmpDB!=null)
+                tmpDB.commit();
+        }
+        isOpen = true;
     }
 
     @Override
@@ -69,20 +67,21 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         return name;
     }
 
+
     @Override
     public synchronized void close() throws BackendException {
-        //noop
+        if (isOpen) manager.removeDatabase(this);
+        isOpen = false;
     }
 
     @Override
     public StaticBuffer get(StaticBuffer key, StoreTransaction txh) throws BackendException {
-//        boolean noTX = (txh == null);
-//        DB tx = (noTX ? txMaker.makeTx() : ((MapdBTx) txh).getTx());
+        boolean noTX = (txh == null);
+        if (noTX)
+            throw new TemporaryBackendException("txh is null!");
         DB tx = ((MapdBTx) txh).getTx();
-        Map<DBEntry, DBEntry> map = tx.getTreeMap(name);
-        return  new StaticArrayBuffer(getBuffer(map.get(key.as(ENTRY_FACTORY))));
-//        if (noTX)
-//            tx.commit();
+        Map<Object, DBEntry> map = tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER);
+        return getBuffer(map.get(key.as(ENTRY_FACTORY)));
     }
 
     @Override
@@ -99,19 +98,17 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
     }
 
     @Override
-    public RecordIterator<KeyValueEntry> getSlice(KVQuery query, final StoreTransaction txh) throws BackendException {
+    public RecordIterator<KeyValueEntry> getSlice(KVQuery query, StoreTransaction txh) throws BackendException {
         final StaticBuffer keyStart = query.getStart();
         final StaticBuffer keyEnd = query.getEnd();
-//        final boolean noTX = (txh == null);
-//        final MapdBTx mTxH =  txh);
+        final MapdBTx mTxH = (MapdBTx) txh;
+        if (mTxH.getTx().isClosed())
+            log.error("Requested read from closed database");
         return new RecordIterator<KeyValueEntry>() {
-//            DB tx = (noTX ? txMaker.makeTx() : mTxH.getTx());
-            DB tx = ((MapdBTx)txh).getTx();
-            BTreeMap<DBEntry, DBEntry> map = tx.getTreeMap(name);
+            DB tx = mTxH.getTx();
+            BTreeMap<Object, DBEntry> map = tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER);
 
-
-
-            private final Iterator<Map.Entry<DBEntry,DBEntry>> entries = map.subMap(keyStart.as(ENTRY_FACTORY), keyEnd.as(ENTRY_FACTORY)).entrySet().iterator();
+            private final Iterator<Map.Entry<Object, DBEntry>> entries = map.subMap(keyStart.as(ENTRY_FACTORY), keyEnd.as(ENTRY_FACTORY)).entrySet().iterator();
 
                 @Override
                 public boolean hasNext() {
@@ -120,14 +117,14 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
 
                 @Override
                 public KeyValueEntry next() {
-                    Map.Entry<DBEntry,DBEntry> ent = entries.next();
-                    return new KeyValueEntry(getBuffer(ent.getKey()),getBuffer(ent.getValue()));
+                    Map.Entry<Object, DBEntry> ent = entries.next();
+                    return new KeyValueEntry(getBuffer((DBEntry)ent.getKey()), getBuffer(ent.getValue()));
                 }
 
                 @Override
                 public void close() {
-//                    tx.commit();
-//                    tx.close();
+                    //tx.rollback();
+                    //tx.close();
                 }
 
             @Override
@@ -138,6 +135,7 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
 
     }
 
+
     @Override
     public Map<KVQuery,RecordIterator<KeyValueEntry>> getSlices(List<KVQuery> queries, StoreTransaction txh) throws BackendException {
         throw new UnsupportedOperationException();
@@ -145,39 +143,30 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
 
     @Override
     public void insert(StaticBuffer key, StaticBuffer value, StoreTransaction txh) throws BackendException {
-//        boolean noTX = (txh == null);
-//        DB tx = (noTX ? txMaker.makeTx() : ((MapdBTx) txh).getTx());
+        boolean noTX = (txh == null);
+        if (noTX)
+            throw new TemporaryBackendException("txh is null!");
         DB tx = ((MapdBTx) txh).getTx();
-        BTreeMap<DBEntry,DBEntry> map = tx.getTreeMap(name);
-        map.put(key.as(ENTRY_FACTORY), value.as(ENTRY_FACTORY));
-//        if (noTX) {
-//            tx.commit();
-//            tx.close();}
+        tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER).put(key.as(ENTRY_FACTORY), value.as(ENTRY_FACTORY));
     }
 
 
     @Override
     public void delete(StaticBuffer key, StoreTransaction txh) {
-//        boolean noTX = (txh == null);
-//        DB tx = (noTX ? txMaker.makeTx() : ((MapdBTx) txh).getTx());
+        boolean noTX = (txh == null);
+        if (noTX)
+            return;
         DB tx = ((MapdBTx) txh).getTx();
-        tx.getTreeMap(name).remove(key.as(ENTRY_FACTORY));
-//        if (noTX) {
-//            tx.commit();
-//            tx.close();
-//        }
-
+        tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER).remove(key.as(ENTRY_FACTORY));
     }
 
     public void clear() {
-
-        DB tx = this.manager.getTxMaker().makeTx();
-        tx.getTreeMap(name).clear();
+        DB tx = manager.getTxMaker().makeTx();
+        tx.treeMap(name).clear();
         tx.commit();
-        tx.close();
     }
 
-    private static StaticBuffer getBuffer(DBEntry entry) {
-        return new StaticArrayBuffer(entry.getData(),entry.getOffset(),entry.getOffset()+entry.getSize());
+    public MapDBStoreManager getManager() {
+        return manager;
     }
 }
