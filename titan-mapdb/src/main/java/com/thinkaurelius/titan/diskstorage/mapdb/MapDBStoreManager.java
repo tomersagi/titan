@@ -70,9 +70,9 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
 
     @Override
     public MapdBTx beginTransaction(final BaseTransactionConfig txCfg) throws BackendException {
-        if (!this.stores.values().iterator().hasNext())
-            throw new IllegalStateException("Cannot open transaction, no store exists in MapDB");
-        return new MapdBTx(txCfg, this.stores.values().iterator().next());
+//        if (!this.stores.values().iterator().hasNext())
+//            throw new IllegalStateException("Cannot open transaction, no store exists in MapDB");
+        return new MapdBTx(txCfg, this.txMaker.makeTx(),this);
     }
 
     @Override
@@ -98,19 +98,17 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
             if (!mut.hasAdditions() && !mut.hasDeletions()) {
                 log.debug("Empty mutation set for {}, doing nothing", muts.getKey());
             } else {
-                log.debug("Mutating {}", muts.getKey());
+                log.debug("Mutating {} for transaction {}", muts.getKey(), txh);
             }
 
             if (mut.hasAdditions()) {
                 for (KeyValueEntry entry : mut.getAdditions()) {
                     store.insert(entry.getKey(),entry.getValue(),txh);
-                    log.trace("Insertion on {}: {}", muts.getKey(), entry);
                 }
             }
             if (mut.hasDeletions()) {
                 for (StaticBuffer del : mut.getDeletions()) {
                     store.delete(del,txh);
-                    log.trace("Deletion on {}: {}", muts.getKey(), del);
                 }
             }
         }
@@ -118,7 +116,7 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
 
     void removeDatabase(MapDBKeyValueStore db) {
         if (!stores.containsKey(db.getName())) {
-            throw new IllegalArgumentException("Tried to remove an unkown database from the storage manager");
+            throw new IllegalArgumentException("Tried to remove an unknown database from the storage manager");
         }
         String name = db.getName();
         stores.remove(name);
@@ -141,8 +139,6 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
             db.clear();
             db.close();
         }
-        //TODO delete db files
-
         stores.clear();
     }
 

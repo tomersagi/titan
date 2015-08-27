@@ -12,6 +12,8 @@ import com.thinkaurelius.titan.diskstorage.util.StaticArrayBuffer;
 import org.mapdb.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
 import java.util.*;
 
 public class MapDBKeyValueStore implements OrderedKeyValueStore {
@@ -25,7 +27,7 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         }
     };
 
-    private static StaticBuffer getBuffer(DBEntry entry) {
+    public static StaticBuffer getBuffer(DBEntry entry) {
         return new StaticArrayBuffer(entry.getData(),entry.getOffset(),entry.getOffset()+entry.getSize());
     }
 
@@ -49,7 +51,8 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         try {
             tmpDB = m.getTxMaker().makeTx();
             if (!tmpDB.exists(name))
-                tmpDB.treeMapCreate(name).keySerializer(MapDBStoreManager.DBKSER).valueSerializer(MapDBStoreManager.DBSER).make();
+                tmpDB.treeMapCreate(name)
+                        .keySerializer(MapDBStoreManager.DBKSER).valueSerializer(MapDBStoreManager.DBSER).make();
 //            tmpDB.commit(); moved to finally
 
         } catch (IllegalArgumentException e) {
@@ -79,9 +82,7 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         boolean noTX = (txh == null);
         if (noTX)
             throw new TemporaryBackendException("txh is null!");
-        DB tx = ((MapdBTx) txh).getTx();
-        Map<Object, DBEntry> map = tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER);
-        return getBuffer(map.get(key.as(ENTRY_FACTORY)));
+        return ((MapdBTx) txh).get(name,key);
     }
 
     @Override
@@ -102,10 +103,10 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         final StaticBuffer keyStart = query.getStart();
         final StaticBuffer keyEnd = query.getEnd();
         final MapdBTx mTxH = (MapdBTx) txh;
-        if (mTxH.getTx().isClosed())
-            log.error("Requested read from closed database");
+//        if (mTxH.getTx().isClosed())
+//            log.error("Requested read from closed database");
         return new RecordIterator<KeyValueEntry>() {
-            DB tx = mTxH.getTx();
+            DB tx = mTxH.getSlice();
             BTreeMap<Object, DBEntry> map = tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER);
 
             private final Iterator<Map.Entry<Object, DBEntry>> entries = map.subMap(keyStart.as(ENTRY_FACTORY), keyEnd.as(ENTRY_FACTORY)).entrySet().iterator();
@@ -118,6 +119,7 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
                 @Override
                 public KeyValueEntry next() {
                     Map.Entry<Object, DBEntry> ent = entries.next();
+                    log.debug(" tx {} read key {}",tx,((DBEntry)ent.getKey()).toString());
                     return new KeyValueEntry(getBuffer((DBEntry)ent.getKey()), getBuffer(ent.getValue()));
                 }
 
@@ -146,8 +148,16 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         boolean noTX = (txh == null);
         if (noTX)
             throw new TemporaryBackendException("txh is null!");
-        DB tx = ((MapdBTx) txh).getTx();
-        tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER).put(key.as(ENTRY_FACTORY), value.as(ENTRY_FACTORY));
+
+//        DataIO.DataOutputByteArray out = new DataIO.DataOutputByteArray();
+//        try {
+//            MapDBStoreManager.DBKSER.serialize(out,key.as(ENTRY_FACTORY));
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        }
+//        DB tx = ((MapdBTx) txh).getTx();
+//        log.debug(" tx {} insert to key {} serialized as {}",tx,key.getBytes(0, key.length()),out.copyBytes());
+        ((MapdBTx) txh).insert(name,key,value);
     }
 
 
@@ -156,8 +166,8 @@ public class MapDBKeyValueStore implements OrderedKeyValueStore {
         boolean noTX = (txh == null);
         if (noTX)
             return;
-        DB tx = ((MapdBTx) txh).getTx();
-        tx.treeMap(name, MapDBStoreManager.DBKSER, MapDBStoreManager.DBSER).remove(key.as(ENTRY_FACTORY));
+        ((MapdBTx)txh).delete(name, key);
+
     }
 
     public void clear() {
