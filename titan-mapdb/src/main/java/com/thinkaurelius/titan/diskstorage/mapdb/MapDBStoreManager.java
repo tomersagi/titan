@@ -77,6 +77,7 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
         int cacheSize = configuration.get(CACHE_SIZE);
         valuesOutsideNodes = configuration.get(VALUES_OUTSIDE_NODE);
         nodeSize = configuration.get(NODE_SIZE);
+        log.info("MapDB storeManager init with cacheSize {}, valuesOutsideNodes {}, nodeSize {}",cacheSize,valuesOutsideNodes,nodeSize);
 
 
         features = new StandardStoreFeatures.Builder()
