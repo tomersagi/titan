@@ -60,6 +60,12 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
                     "Size of cache for MapDB store",
                     ConfigOption.Type.MASKABLE, 1024*4, ConfigOption.positiveInt());
 
+    public static final ConfigOption<Boolean> UNSAFE =
+            new ConfigOption<Boolean>(MAPDB_NS,"unsafe",
+                    "If using unsafeFTM option in mapdb",
+                    ConfigOption.Type.LOCAL, false);
+
+
 
     private final Map<String, MapDBKeyValueStore> stores;
 
@@ -69,6 +75,7 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
     protected final StoreFeatures features;
     protected final boolean valuesOutsideNodes;
     protected final int nodeSize;
+    protected final boolean nvmStore;
 
     public MapDBStoreManager(Configuration configuration) throws BackendException {
         super(configuration);
@@ -77,7 +84,8 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
         int cacheSize = configuration.get(CACHE_SIZE);
         valuesOutsideNodes = configuration.get(VALUES_OUTSIDE_NODE);
         nodeSize = configuration.get(NODE_SIZE);
-        log.info("MapDB storeManager init with cacheSize {}, valuesOutsideNodes {}, nodeSize {}",cacheSize,valuesOutsideNodes,nodeSize);
+        nvmStore = configuration.get(UNSAFE);
+        log.info("MapDB storeManager init with cacheSize {}, valuesOutsideNodes {}, nodeSize {}, unsafe {}",cacheSize,valuesOutsideNodes,nodeSize,nvmStore);
 
 
         features = new StandardStoreFeatures.Builder()
@@ -88,7 +96,11 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
                     .keyOrdered(true)
                     .build();
 
-        DBMaker.Maker maker =  DBMaker.fileDB(new File(directory, "titanBackEnd.mapdb"))
+        DBMaker.Maker maker;
+        if (nvmStore)
+            maker = DBMaker.memoryUnsafeDB().cacheHashTableEnable(cacheSize).serializerClassLoader(MapDBStoreManager.class.getClassLoader());
+            else
+            maker =  DBMaker.fileDB(new File(directory, "titanBackEnd.mapdb"))
                 .fileLockDisable()
                 .fileMmapEnableIfSupported()
                 .cacheHashTableEnable(cacheSize)
@@ -235,6 +247,8 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
                 //Ignore
             }
             try {
+                if (nvmStore)
+                    return;
                 db.close();
                 db=null;
             } catch (DBException e) {
@@ -255,6 +269,11 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
 //            environment.removeDatabase(tx, db);
 //            log.debug("Removed database {} (clearStorage)", db);
 //        }
+        if (nvmStore) {
+            db.close();
+            return;
+        }
+
         close();
         IOUtils.deleteFromDirectory(directory);
         if(directory.listFiles().length!=0)
