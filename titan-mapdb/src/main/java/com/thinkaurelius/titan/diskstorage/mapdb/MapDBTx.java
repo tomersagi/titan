@@ -88,6 +88,7 @@ public class MapDBTx extends AbstractStoreTransaction {
         }
     }
 
+
     @Override
     public String toString() {
         return getClass().getSimpleName() + (null == db ? "nulltx" : db.toString());

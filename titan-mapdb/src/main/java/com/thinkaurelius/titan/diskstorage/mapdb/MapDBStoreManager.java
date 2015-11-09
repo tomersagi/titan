@@ -102,7 +102,8 @@ public class MapDBStoreManager extends LocalStoreManager implements OrderedKeyVa
             else
             maker =  DBMaker.fileDB(new File(directory, "titanBackEnd.mapdb"))
                 .fileLockDisable()
-                .fileMmapEnableIfSupported()
+                //.fileMmapEnableIfSupported()
+                .fileChannelEnable()
                 .cacheHashTableEnable(cacheSize)
                 .serializerClassLoader(MapDBStoreManager.class.getClassLoader());
 
